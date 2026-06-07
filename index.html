@@ -2,8 +2,9 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <title>전국 지하철 네비게이션 (D3.js 연동)</title>
+    <title>지하철 경로 탐색기</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+
     <style>
       body {
         font-family: 'Pretendard', sans-serif;
@@ -15,6 +16,7 @@
         height: 100vh;
         box-sizing: border-box;
       }
+
       .header {
         background: white;
         padding: 20px;
@@ -23,12 +25,14 @@
         margin-bottom: 20px;
         z-index: 10;
       }
+
       .controls {
         display: flex;
         gap: 10px;
         align-items: center;
         flex-wrap: wrap;
       }
+
       select,
       button {
         padding: 10px;
@@ -36,13 +40,15 @@
         border: 1px solid #ddd;
         border-radius: 6px;
       }
+
       button {
-        background-color: #03c75a; /* 네이버 스타일 초록색 */
+        background-color: #03c75a;
         color: white;
         font-weight: bold;
         border: none;
         cursor: pointer;
       }
+
       button:hover {
         background-color: #02a84b;
       }
@@ -52,6 +58,7 @@
         font-weight: bold;
         color: #333;
         word-break: keep-all;
+        line-height: 1.5;
       }
 
       #map-container {
@@ -68,68 +75,92 @@
         height: 100%;
         cursor: grab;
       }
+
       svg:active {
         cursor: grabbing;
       }
 
-      /* SVG Elements Styling */
       .link {
         stroke: #ced4da;
-        stroke-opacity: 0.6;
-        stroke-width: 2px;
-        transition: all 0.3s;
-      }
-      .node {
-        stroke: #fff;
-        stroke-width: 1.5px;
-        transition: all 0.3s;
-      }
-      .label {
-        font-size: 10px;
-        fill: #495057;
-        pointer-events: none;
-        transition: all 0.3s;
+        stroke-opacity: 0.65;
+        stroke-width: 1.2px;
       }
 
-      /* Highlight Styling for Navigation */
-      .dimmed {
-        opacity: 0.1 !important;
+      .transfer-link {
+        stroke-dasharray: 3 3;
+        stroke-opacity: 0.3;
       }
+
+      .node {
+        stroke: #fff;
+        stroke-width: 0.6px;
+      }
+
+      .dimmed {
+        opacity: 0.05 !important;
+      }
+
       .highlight-link {
         stroke: #ff0000 !important;
         stroke-opacity: 1 !important;
-        stroke-width: 5px !important;
+        stroke-width: 2.5px !important;
+        stroke-dasharray: none !important;
       }
+
       .highlight-node {
         stroke: #ff0000 !important;
-        stroke-width: 3px !important;
-        r: 8 !important;
+        stroke-width: 1px !important;
       }
-      .highlight-label {
-        fill: #000 !important;
-        font-size: 14px !important;
-        font-weight: bold !important;
+
+      .station-marker {
+        display: none;
+        pointer-events: none;
+      }
+
+      .station-marker.visible {
+        display: block;
+      }
+
+      .station-pill {
+        stroke: #ff0000;
+        stroke-width: 0.6px;
+        filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18));
+      }
+
+      .station-pill-text {
+        fill: #111;
+        font-size: 5px;
+        font-weight: 800;
+        text-anchor: middle;
+        dominant-baseline: middle;
+        paint-order: stroke;
+        stroke: white;
+        stroke-width: 0.8px;
+        stroke-linejoin: round;
       }
     </style>
   </head>
+
   <body>
     <div class="header">
-      <h2>🚇 실시간 지하철 경로 탐색기 (JSON 연동)</h2>
+      <h2>지하철 경로 탐색기</h2>
+
       <div class="controls">
         <select id="start-station">
           <option value="">출발역 선택...</option>
         </select>
-        <span>➡️</span>
+
+        <span>→</span>
+
         <select id="end-station">
           <option value="">도착역 선택...</option>
         </select>
+
         <button onclick="findAndHighlightRoute()">최단 경로 탐색</button>
         <button onclick="resetMap()" style="background: #6c757d">초기화</button>
       </div>
-      <div id="result">
-        JSON 데이터를 불러오는 중입니다... 마우스 휠로 지도를 확대/축소하고
-        드래그할 수 있습니다.
-      </div>
+
+      <div id="result">JSON 데이터를 불러오는 중입니다...</div>
     </div>
 
     <div id="map-container">
@@ -140,9 +171,11 @@
       let rawNodes = [];
       let graphLinks = [];
       let adjList = {};
-      let nodeElements, linkElements, labelElements;
+      let nodeElements;
+      let linkElements;
+      let stationMarkerElements;
+      let currentPathSet = new Set();
 
-      // 호선별 색상 (네이버 지도 스타일 참고)
       const lineColors = {
         '01호선': '#0052A4',
         '02호선': '#009D3E',
@@ -153,9 +186,19 @@
         '07호선': '#747F00',
         '08호선': '#E6186C',
         '09호선': '#BDB092',
+        '1호선': '#0052A4',
+        '2호선': '#009D3E',
+        '3호선': '#EF7C1C',
+        '4호선': '#00A5DE',
+        '5호선': '#996CAC',
+        '6호선': '#CD7C2F',
+        '7호선': '#747F00',
+        '8호선': '#E6186C',
+        '9호선': '#BDB092',
         인천선: '#759CE6',
         인천2호선: '#FD8100',
         수인분당선: '#FABE00',
+        경의중앙선: '#77C4A3',
         경의선: '#77C4A3',
         경춘선: '#0C8E72',
         공항철도: '#0090D2',
@@ -164,118 +207,201 @@
         'GTX-A': '#9E7A8A',
       };
 
-      // 1. 데이터 불러오기 및 그래프 생성
-      fetch('subway.json')
-        .then((response) => response.json())
-        .then((data) => {
-          const stationData = data.DATA;
+      loadSubwayData();
 
-          // 드롭다운 및 노드 배열 초기화
-          const startSelect = document.getElementById('start-station');
-          const endSelect = document.getElementById('end-station');
+      function loadSubwayData() {
+        fetch('./merged_subway_with_gps.json')
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error('JSON 파일을 찾을 수 없습니다.');
+            }
 
-          // 노드(정점) 생성
-          stationData.forEach((d) => {
-            rawNodes.push({
-              id: d.station_cd,
-              name: d.station_nm,
-              line: d.line_num,
-              color: lineColors[d.line_num] || '#999',
-            });
+            return response.json();
+          })
+          .then((json) => {
+            const stationData = Array.isArray(json) ? json : json.DATA || [];
 
-            let option = new Option(
-              `${d.station_nm} (${d.line_num})`,
-              d.station_cd
-            );
-            startSelect.add(option.cloneNode(true));
-            endSelect.add(option);
-          });
+            rawNodes = stationData
+              .map((d, index) => {
+                const name = d.station_nm || d.name;
+                const line = d.line_num || d.line;
+                const stationCode = d.station_cd || d.bldn_id || String(index);
+                const lat = Number(d.lat);
+                const lng = Number(d.lng);
 
-          // 간선(선로) 자동 생성 로직
-          // (1) 같은 호선 내에서 역 코드(station_cd) 순으로 연결
-          const lineGroups = d3.group(rawNodes, (d) => d.line);
-          lineGroups.forEach((stations, line) => {
-            // 역 코드를 기준으로 정렬하여 순서대로 잇기
-            stations.sort((a, b) => a.id.localeCompare(b.id));
-            for (let i = 0; i < stations.length - 1; i++) {
-              graphLinks.push({
-                source: stations[i].id,
-                target: stations[i + 1].id,
+                return {
+                  id: `${line}-${stationCode}-${index}`,
+                  name,
+                  line,
+                  stationCode,
+                  frCode: d.fr_code || '',
+                  lat,
+                  lng,
+                  color: lineColors[line] || '#999',
+                };
+              })
+              .filter((d) => {
+                return (
+                  d.name &&
+                  d.line &&
+                  Number.isFinite(d.lat) &&
+                  Number.isFinite(d.lng)
+                );
               });
+
+            if (rawNodes.length === 0) {
+              document.getElementById('result').innerText =
+                '역 좌표 데이터를 찾지 못했습니다. JSON 필드명을 확인하세요.';
+              return;
             }
+
+            fillStationOptions();
+            createGraphLinks();
+            createAdjList();
+            renderMap();
+
+            document.getElementById(
+              'result'
+            ).innerText = `총 ${rawNodes.length}개의 역 좌표 데이터를 불러왔습니다. 출발역과 도착역을 선택하세요.`;
+          })
+          .catch((error) => {
+            console.error(error);
+            document.getElementById('result').innerText =
+              '오류: merged_subway_with_gps.json 파일 이름이나 JSON 형식을 확인하세요.';
+          });
+      }
+
+      function fillStationOptions() {
+        const startSelect = document.getElementById('start-station');
+        const endSelect = document.getElementById('end-station');
+
+        startSelect.innerHTML = '<option value="">출발역 선택...</option>';
+        endSelect.innerHTML = '<option value="">도착역 선택...</option>';
+
+        rawNodes.forEach((station) => {
+          const text = `${station.name} (${station.line})`;
+
+          startSelect.add(new Option(text, station.id));
+          endSelect.add(new Option(text, station.id));
+        });
+      }
+
+      function createGraphLinks() {
+        graphLinks = [];
+
+        const lineGroups = d3.group(rawNodes, (d) => d.line);
+
+        lineGroups.forEach((stations) => {
+          stations.sort((a, b) => {
+            const aKey = a.frCode || a.stationCode;
+            const bKey = b.frCode || b.stationCode;
+
+            return String(aKey).localeCompare(String(bKey), 'ko', {
+              numeric: true,
+            });
           });
 
-          // (2) 환승역 연결 (이름이 같은 다른 호선의 역들을 연결)
-          const nameGroups = d3.group(rawNodes, (d) => d.name);
-          nameGroups.forEach((stations, name) => {
-            if (stations.length > 1) {
-              for (let i = 0; i < stations.length; i++) {
-                for (let j = i + 1; j < stations.length; j++) {
-                  graphLinks.push({
-                    source: stations[i].id,
-                    target: stations[j].id,
-                  });
-                }
-              }
-            }
-          });
-
-          // 인접 리스트 생성 (길찾기 알고리즘용)
-          rawNodes.forEach((n) => (adjList[n.id] = []));
-          graphLinks.forEach((l) => {
-            adjList[l.source].push(l.target);
-            adjList[l.target].push(l.source); // 양방향 통행
-          });
-
-          document.getElementById(
-            'result'
-          ).innerText = `총 ${rawNodes.length}개의 역 데이터를 성공적으로 불러왔습니다. 목적지를 검색해 보세요!`;
-
-          // D3 시각화 시작
-          renderMap();
+          for (let i = 0; i < stations.length - 1; i++) {
+            graphLinks.push({
+              sourceId: stations[i].id,
+              targetId: stations[i + 1].id,
+              transfer: false,
+            });
+          }
         });
 
-      // 2. D3.js로 노선도 렌더링 (Force Graph)
+        const nameGroups = d3.group(rawNodes, (d) => d.name);
+
+        nameGroups.forEach((stations) => {
+          if (stations.length < 2) return;
+
+          for (let i = 0; i < stations.length; i++) {
+            for (let j = i + 1; j < stations.length; j++) {
+              graphLinks.push({
+                sourceId: stations[i].id,
+                targetId: stations[j].id,
+                transfer: true,
+              });
+            }
+          }
+        });
+      }
+
+      function createAdjList() {
+        adjList = {};
+
+        rawNodes.forEach((node) => {
+          adjList[node.id] = [];
+        });
+
+        graphLinks.forEach((link) => {
+          adjList[link.sourceId].push(link.targetId);
+          adjList[link.targetId].push(link.sourceId);
+        });
+      }
+
+      function getPillWidth(name) {
+        return Math.max(18, name.length * 6 + 8);
+      }
+
       function renderMap() {
         const svg = d3.select('#subway-map');
-        const width = document.getElementById('map-container').clientWidth;
-        const height = document.getElementById('map-container').clientHeight;
+        const container = document.getElementById('map-container');
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        const padding = 50;
 
-        // 줌(확대/축소) 및 드래그 기능 추가
+        svg.selectAll('*').remove();
+
+        const lngExtent = d3.extent(rawNodes, (d) => d.lng);
+        const latExtent = d3.extent(rawNodes, (d) => d.lat);
+
+        const xScale = d3
+          .scaleLinear()
+          .domain(lngExtent)
+          .range([padding, width - padding]);
+
+        const yScale = d3
+          .scaleLinear()
+          .domain(latExtent)
+          .range([height - padding, padding]);
+
+        rawNodes.forEach((node) => {
+          node.x = xScale(node.lng);
+          node.y = yScale(node.lat);
+          node.pillWidth = getPillWidth(node.name);
+        });
+
+        const nodeById = new Map(rawNodes.map((node) => [node.id, node]));
+
+        graphLinks.forEach((link) => {
+          link.sourceNode = nodeById.get(link.sourceId);
+          link.targetNode = nodeById.get(link.targetId);
+        });
+
         const g = svg.append('g');
+
         svg.call(
           d3
             .zoom()
-            .scaleExtent([0.1, 4])
+            .scaleExtent([0.5, 10])
             .on('zoom', (event) => {
               g.attr('transform', event.transform);
             })
         );
 
-        // 물리 엔진 설정 (역들을 자연스럽게 펼침)
-        const simulation = d3
-          .forceSimulation(rawNodes)
-          .force(
-            'link',
-            d3
-              .forceLink(graphLinks)
-              .id((d) => d.id)
-              .distance(30)
-          )
-          .force('charge', d3.forceManyBody().strength(-150)) // 밀어내는 힘
-          .force('center', d3.forceCenter(width / 2, height / 2)); // 중앙 정렬
-
-        // 선(Link) 그리기
         linkElements = g
           .append('g')
           .selectAll('line')
           .data(graphLinks)
           .enter()
           .append('line')
-          .attr('class', 'link')
-          .attr('id', (d) => `link-${d.source.id}-${d.target.id}`);
+          .attr('class', (d) => (d.transfer ? 'link transfer-link' : 'link'))
+          .attr('x1', (d) => d.sourceNode.x)
+          .attr('y1', (d) => d.sourceNode.y)
+          .attr('x2', (d) => d.targetNode.x)
+          .attr('y2', (d) => d.targetNode.y);
 
-        // 역 동그라미(Node) 그리기
         nodeElements = g
           .append('g')
           .selectAll('circle')
@@ -283,58 +409,76 @@
           .enter()
           .append('circle')
           .attr('class', 'node')
-          .attr('id', (d) => `node-${d.id}`)
-          .attr('r', 5)
-          .attr('fill', (d) => d.color);
+          .attr('r', 1.5)
+          .attr('cx', (d) => d.x)
+          .attr('cy', (d) => d.y)
+          .attr('fill', (d) => d.color)
+          .on('mouseenter', function (event, d) {
+            stationMarkerElements
+              .filter((station) => station.id === d.id)
+              .classed('visible', true)
+              .raise();
+          })
+          .on('mouseleave', function (event, d) {
+            if (currentPathSet.has(d.id)) return;
 
-        // 역 이름(Label) 그리기
-        labelElements = g
+            stationMarkerElements
+              .filter((station) => station.id === d.id)
+              .classed('visible', false);
+          });
+
+        stationMarkerElements = g
           .append('g')
-          .selectAll('text')
+          .selectAll('g')
           .data(rawNodes)
           .enter()
-          .append('text')
-          .attr('class', 'label')
-          .attr('id', (d) => `label-${d.id}`)
-          .attr('dx', 8)
-          .attr('dy', 3)
-          .text((d) => d.name);
+          .append('g')
+          .attr('class', 'station-marker')
+          .attr('transform', (d) => `translate(${d.x}, ${d.y})`);
 
-        // 시뮬레이션 틱마다 좌표 업데이트
-        simulation.on('tick', () => {
-          linkElements
-            .attr('x1', (d) => d.source.x)
-            .attr('y1', (d) => d.source.y)
-            .attr('x2', (d) => d.target.x)
-            .attr('y2', (d) => d.target.y);
-          nodeElements.attr('cx', (d) => d.x).attr('cy', (d) => d.y);
-          labelElements.attr('x', (d) => d.x).attr('y', (d) => d.y);
-        });
+        stationMarkerElements
+          .append('rect')
+          .attr('class', 'station-pill')
+          .attr('x', (d) => -d.pillWidth / 2)
+          .attr('y', -4.5)
+          .attr('width', (d) => d.pillWidth)
+          .attr('height', 9)
+          .attr('rx', 4.5)
+          .attr('fill', (d) => d.color);
+
+        stationMarkerElements
+          .append('text')
+          .attr('class', 'station-pill-text')
+          .attr('x', 0)
+          .attr('y', 0.7)
+          .text((d) => d.name);
       }
 
-      // 3. 최단 경로 알고리즘 (BFS)
       function bfs(startId, endId) {
         if (startId === endId) return [startId];
-        let queue = [[startId]];
-        let visited = new Set([startId]);
+
+        const queue = [[startId]];
+        const visited = new Set([startId]);
 
         while (queue.length > 0) {
-          let path = queue.shift();
-          let current = path[path.length - 1];
+          const path = queue.shift();
+          const current = path[path.length - 1];
 
-          for (let neighbor of adjList[current]) {
-            if (!visited.has(neighbor)) {
-              let newPath = [...path, neighbor];
-              if (neighbor === endId) return newPath;
-              visited.add(neighbor);
+          for (const next of adjList[current] || []) {
+            if (!visited.has(next)) {
+              const newPath = [...path, next];
+
+              if (next === endId) return newPath;
+
+              visited.add(next);
               queue.push(newPath);
             }
           }
         }
-        return null; // 경로 없음
+
+        return null;
       }
 
-      // 4. 경로 탐색 및 하이라이트 UI 업데이트
       function findAndHighlightRoute() {
         const startId = document.getElementById('start-station').value;
         const endId = document.getElementById('end-station').value;
@@ -344,63 +488,74 @@
           return;
         }
 
-        resetMap(); // 기존 하이라이트 초기화
+        resetMap(false);
 
         const path = bfs(startId, endId);
         const resultDiv = document.getElementById('result');
 
-        if (path) {
-          // 모든 요소를 투명하게 처리 (dimmed)
-          d3.selectAll('.node, .link, .label').classed('dimmed', true);
-
-          let pathNames = [];
-
-          // 경로에 있는 노드와 간선만 하이라이트
-          for (let i = 0; i < path.length; i++) {
-            let nodeId = path[i];
-            let nodeData = rawNodes.find((n) => n.id === nodeId);
-            pathNames.push(`${nodeData.name}(${nodeData.line})`);
-
-            d3.select(`#node-${nodeId}`)
-              .classed('dimmed', false)
-              .classed('highlight-node', true)
-              .raise();
-            d3.select(`#label-${nodeId}`)
-              .classed('dimmed', false)
-              .classed('highlight-label', true)
-              .raise();
-
-            if (i < path.length - 1) {
-              let nextId = path[i + 1];
-              // 방향이 일정하지 않으므로 양방향 ID 모두 체크
-              let linkEl = d3.select(`#link-${nodeId}-${nextId}`);
-              if (linkEl.empty())
-                linkEl = d3.select(`#link-${nextId}-${nodeId}`);
-
-              linkEl
-                .classed('dimmed', false)
-                .classed('highlight-link', true)
-                .raise();
-            }
-          }
-
-          resultDiv.innerHTML = `총 <strong>${
-            path.length - 1
-          } 정거장</strong>을 이동합니다.<br>경로: ${pathNames.join(' ➡️ ')}`;
-        } else {
-          resultDiv.innerHTML = `<span style="color:red">경로를 찾을 수 없습니다. (데이터가 끊겨있을 수 있습니다)</span>`;
+        if (!path) {
+          resultDiv.innerHTML =
+            '<span style="color:red">경로를 찾을 수 없습니다.</span>';
+          return;
         }
+
+        const pathSet = new Set(path);
+        const linkSet = new Set();
+        currentPathSet = pathSet;
+
+        for (let i = 0; i < path.length - 1; i++) {
+          linkSet.add(`${path[i]}__${path[i + 1]}`);
+          linkSet.add(`${path[i + 1]}__${path[i]}`);
+        }
+
+        nodeElements
+          .classed('dimmed', (d) => !pathSet.has(d.id))
+          .classed('highlight-node', (d) => pathSet.has(d.id))
+          .attr('r', (d) => (pathSet.has(d.id) ? 2.5 : 1.5));
+
+        stationMarkerElements
+          .classed('visible', (d) => pathSet.has(d.id))
+          .classed('dimmed', (d) => !pathSet.has(d.id))
+          .raise();
+
+        linkElements
+          .classed('dimmed', (d) => {
+            return !linkSet.has(`${d.sourceId}__${d.targetId}`);
+          })
+          .classed('highlight-link', (d) => {
+            return linkSet.has(`${d.sourceId}__${d.targetId}`);
+          });
+
+        const pathNames = path.map((id) => {
+          const station = rawNodes.find((node) => node.id === id);
+          return `${station.name}(${station.line})`;
+        });
+
+        resultDiv.innerHTML = `총 <strong>${
+          path.length - 1
+        } 정거장</strong>을 이동합니다.<br>경로: ${pathNames.join(' → ')}`;
       }
 
-      // 지도 스타일 초기화
-      function resetMap() {
-        d3.selectAll('.node, .link, .label')
+      function resetMap(changeText = true) {
+        if (!nodeElements || !linkElements || !stationMarkerElements) return;
+
+        currentPathSet = new Set();
+
+        nodeElements
           .classed('dimmed', false)
           .classed('highlight-node', false)
-          .classed('highlight-link', false)
-          .classed('highlight-label', false);
-        document.getElementById('result').innerText =
-          '지도가 초기화되었습니다. 목적지를 검색해 보세요.';
+          .attr('r', 1.5);
+
+        linkElements.classed('dimmed', false).classed('highlight-link', false);
+
+        stationMarkerElements
+          .classed('visible', false)
+          .classed('dimmed', false);
+
+        if (changeText) {
+          document.getElementById('result').innerText =
+            '지도가 초기화되었습니다. 출발역과 도착역을 선택하세요.';
+        }
       }
     </script>
   </body>
