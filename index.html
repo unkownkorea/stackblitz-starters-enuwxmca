@@ -2,7 +2,7 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <title>지하철 경로 탐색기 (시간/거리 계산)</title>
+    <title>지하철 스마트 네비게이션 (요금/환승/시간 계산)</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
 
     <style>
@@ -33,18 +33,14 @@
         flex-wrap: wrap;
       }
 
-      input,
-      select,
-      button {
+      input, select, button {
         padding: 10px;
         font-size: 15px;
         border: 1px solid #ddd;
         border-radius: 6px;
       }
 
-      input {
-        width: 140px;
-      }
+      input { width: 140px; }
 
       button {
         background-color: #03c75a;
@@ -53,10 +49,7 @@
         border: none;
         cursor: pointer;
       }
-
-      button:hover {
-        background-color: #02a84b;
-      }
+      button:hover { background-color: #02a84b; }
 
       #result {
         margin-top: 15px;
@@ -65,6 +58,16 @@
         word-break: keep-all;
         line-height: 1.6;
         font-size: 15px;
+      }
+      
+      .fare-box {
+        display: inline-block;
+        background-color: #f1f3f5;
+        padding: 8px 12px;
+        border-radius: 6px;
+        margin-top: 5px;
+        font-size: 14px;
+        border: 1px solid #dee2e6;
       }
 
       #map-container {
@@ -83,7 +86,7 @@
       .transfer-link { stroke-dasharray: 3 3; stroke-opacity: 0.3; }
       .node { stroke: #fff; stroke-width: 0.6px; }
       .dimmed { opacity: 0.05 !important; }
-      
+
       .highlight-link {
         stroke: #ff0000 !important;
         stroke-opacity: 1 !important;
@@ -119,13 +122,14 @@
         <select id="criterion">
           <option value="time">⏳ 최소 시간</option>
           <option value="dist">📏 최단 거리</option>
+          <option value="transferPenalty">🔄 최소 환승</option>
         </select>
 
         <button onclick="findAndHighlightRoute()">경로 탐색</button>
         <button onclick="resetMap()" style="background: #6c757d">초기화</button>
       </div>
 
-      <div id="result">JSON과 CSV 데이터를 동시에 불러오는 중입니다...</div>
+      <div id="result">데이터를 불러오는 중입니다...</div>
     </div>
 
     <div id="map-container">
@@ -137,7 +141,7 @@
       let graphLinks = [];
       let adjList = {};
       let csvDataMap = {};
-      
+
       let nodeElements;
       let linkElements;
       let stationMarkerElements;
@@ -160,19 +164,19 @@
           fetch('./merged_subway_with_gps.json').then(res => res.json()),
           fetch('./서울교통공사 역간거리 및 소요시간_240810.csv')
             .then(res => res.ok ? res.text() : "")
-            .catch(() => "") // 파일이 없어도 에러 안나게 처리
+            .catch(() => "")
         ])
         .then(([json, csvText]) => {
-          // 1. CSV 데이터 파싱 (소요시간 분/초 변환 및 거리 저장)
+          // 1. CSV 데이터 파싱
           if (csvText) {
             const lines = csvText.split('\n').map(l => l.trim()).filter(l => l);
             for(let i = 1; i < lines.length; i++) {
               const row = lines[i].split(',');
               if(row.length < 5) continue;
-              
+
               const lineNum = String(row[1]).padStart(2, '0') + '호선';
               const name = row[2].replace(/역$/, '').split('(')[0].trim();
-              
+
               let timeSecs = 0;
               if(row[3] && row[3].includes(':')) {
                 const parts = row[3].split(':');
@@ -210,12 +214,11 @@
         });
       }
 
-      // 데이터리스트 자동완성 채우기
       function fillStationOptions() {
         const datalist = document.getElementById('station-list');
         datalist.innerHTML = '';
         const uniqueNames = [...new Set(rawNodes.map(n => n.name))].sort();
-        
+
         uniqueNames.forEach(name => {
           let option = document.createElement('option');
           option.value = name;
@@ -223,7 +226,6 @@
         });
       }
 
-      // 간선 및 가중치(시간/거리) 할당
       function createGraphLinks() {
         graphLinks = [];
         const lineGroups = d3.group(rawNodes, d => d.line);
@@ -234,23 +236,31 @@
           for (let i = 0; i < stations.length - 1; i++) {
             const s = stations[i];
             const t = stations[i + 1];
-            
-            // CSV 기반 가중치 (데이터가 없으면 2분, 1km로 임의 설정)
+
             const csvData = csvDataMap[`${t.line}-${t.name}`];
             const time = (csvData && csvData.timeSecs > 0) ? csvData.timeSecs : 120;
             const dist = (csvData && csvData.dist > 0) ? csvData.dist : 1.0;
 
-            graphLinks.push({ sourceId: s.id, targetId: t.id, transfer: false, time, dist });
+            // 일반 선로는 최소환승 모드일 때 시간 그대로 가중치 적용
+            graphLinks.push({ sourceId: s.id, targetId: t.id, isTransfer: false, time, dist, transferPenalty: time });
           }
         });
 
-        // 환승역 처리 (환승시간 5분, 거리 0.1km 패널티 부여)
+        // 환승역 처리
         const nameGroups = d3.group(rawNodes, d => d.name);
         nameGroups.forEach(stations => {
           if (stations.length < 2) return;
           for (let i = 0; i < stations.length; i++) {
             for (let j = i + 1; j < stations.length; j++) {
-              graphLinks.push({ sourceId: stations[i].id, targetId: stations[j].id, transfer: true, time: 300, dist: 0.1 });
+              // 환승 시 막대한 페널티(100,000점)를 부여하여 최소 환승 유도
+              graphLinks.push({ 
+                sourceId: stations[i].id, 
+                targetId: stations[j].id, 
+                isTransfer: true, 
+                time: 300, 
+                dist: 0.1, 
+                transferPenalty: 100000 + 300 
+              });
             }
           }
         });
@@ -260,8 +270,8 @@
         adjList = {};
         rawNodes.forEach(node => adjList[node.id] = []);
         graphLinks.forEach(link => {
-          adjList[link.sourceId].push({ targetId: link.targetId, time: link.time, dist: link.dist });
-          adjList[link.targetId].push({ targetId: link.sourceId, time: link.time, dist: link.dist });
+          adjList[link.sourceId].push({ targetId: link.targetId, time: link.time, dist: link.dist, transferPenalty: link.transferPenalty, isTransfer: link.isTransfer });
+          adjList[link.targetId].push({ targetId: link.sourceId, time: link.time, dist: link.dist, transferPenalty: link.transferPenalty, isTransfer: link.isTransfer });
         });
       }
 
@@ -293,7 +303,7 @@
         svg.call(d3.zoom().scaleExtent([0.5, 10]).on('zoom', event => g.attr('transform', event.transform)));
 
         linkElements = g.append('g').selectAll('line').data(graphLinks).enter().append('line')
-          .attr('class', d => d.transfer ? 'link transfer-link' : 'link')
+          .attr('class', d => d.isTransfer ? 'link transfer-link' : 'link')
           .attr('x1', d => d.sourceNode.x).attr('y1', d => d.sourceNode.y)
           .attr('x2', d => d.targetNode.x).attr('y2', d => d.targetNode.y);
 
@@ -312,30 +322,49 @@
           .attr('x', 0).attr('y', 0.7).text(d => d.name);
       }
 
-      // 다익스트라(Dijkstra) 길찾기 알고리즘
+      // 거리비례 요금 계산 함수 (일반/청소년/어린이)
+      function calculateFare(distanceKm) {
+        let extraFare = 0;
+        
+        // 10km 초과 ~ 50km 이하: 5km당 100원 추가
+        if (distanceKm > 10 && distanceKm <= 50) {
+          extraFare = Math.ceil((distanceKm - 10) / 5) * 100;
+        } 
+        // 50km 초과: 10~50km 구간 요금(800원) + 50km 초과분 8km당 100원 추가
+        else if (distanceKm > 50) {
+          extraFare = 800 + Math.ceil((distanceKm - 50) / 8) * 100;
+        }
+
+        const adult = 1400 + extraFare;
+        const teen = 800 + Math.floor((extraFare * 0.8) / 10) * 10; // 청소년 추가요금 20% 할인
+        const child = 500 + Math.floor((extraFare * 0.5) / 10) * 10; // 어린이 추가요금 50% 할인
+
+        return { adult: adult.toLocaleString(), teen: teen.toLocaleString(), child: child.toLocaleString() };
+      }
+
       function findShortestPath(startName, endName, criterion) {
         const startNodes = rawNodes.filter(n => n.name === startName).map(n => n.id);
         const endNodes = rawNodes.filter(n => n.name === endName).map(n => n.id);
-        
+
         if (startNodes.length === 0 || endNodes.length === 0) return null;
 
         const distMap = new Map();
         const prevMap = new Map();
         const unvisited = new Set();
-        
+
         rawNodes.forEach(n => { distMap.set(n.id, Infinity); unvisited.add(n.id); });
         startNodes.forEach(id => distMap.set(id, 0));
-        
+
         while(unvisited.size > 0) {
           let u = null, minDist = Infinity;
           for (const nodeId of unvisited) {
             const d = distMap.get(nodeId);
             if (d < minDist) { minDist = d; u = nodeId; }
           }
-          
+
           if (u === null) break;
-          
-          if (endNodes.includes(u)) { // 목적지 도착
+
+          if (endNodes.includes(u)) {
             const path = [];
             let curr = u;
             while (curr !== undefined) {
@@ -345,11 +374,11 @@
             return path;
           }
           unvisited.delete(u);
-          
+
           for (const edge of adjList[u]) {
             const v = edge.targetId;
             if (!unvisited.has(v)) continue;
-            
+
             const alt = distMap.get(u) + edge[criterion];
             if (alt < distMap.get(v)) {
               distMap.set(v, alt);
@@ -376,20 +405,21 @@
           return;
         }
 
-        // 경로의 총 소요시간 및 거리 계산
-        let totalTimeSecs = 0, totalDist = 0;
+        // 경로의 통계(시간, 거리, 환승) 계산
+        let totalTimeSecs = 0, totalDist = 0, transferCount = 0;
         for (let i = 0; i < path.length - 1; i++) {
           const edge = adjList[path[i]].find(e => e.targetId === path[i+1]);
           totalTimeSecs += edge.time;
           totalDist += edge.dist;
+          if(edge.isTransfer) transferCount++;
         }
 
         const mins = Math.floor(totalTimeSecs / 60);
         const secs = totalTimeSecs % 60;
         const timeStr = secs > 0 ? `${mins}분 ${secs}초` : `${mins}분`;
         const distStr = totalDist.toFixed(1) + 'km';
+        const fares = calculateFare(totalDist);
 
-        // 화면 하이라이트 처리
         currentPathSet = new Set(path);
         const linkSet = new Set();
         for (let i = 0; i < path.length - 1; i++) {
@@ -401,7 +431,7 @@
         stationMarkerElements.classed('visible', d => currentPathSet.has(d.id)).classed('dimmed', d => !currentPathSet.has(d.id)).raise();
         linkElements.classed('dimmed', d => !linkSet.has(`${d.sourceId}__${d.targetId}`)).classed('highlight-link', d => linkSet.has(`${d.sourceId}__${d.targetId}`));
 
-        // 결과 출력 포맷
+        // 텍스트 출력 포맷 (환승역 중복 이름 제거하여 경로 생성)
         let prevName = "";
         const pathNames = [];
         path.forEach((id) => {
@@ -413,9 +443,10 @@
         });
 
         resultDiv.innerHTML = 
-          `<span style="color:#03c75a; font-size:18px;">최적 경로 탐색 완료!</span><br>` +
-          `🕒 예상 소요시간: <strong style="color:red;">${timeStr}</strong> / 📏 총 거리: <strong>${distStr}</strong> / 총 ${pathNames.length - 1}회 정차<br>` +
-          `<div style="margin-top:10px; background:#f1f3f5; padding:10px; border-radius:6px;">${pathNames.join(' ➡️ ')}</div>`;
+          `<span style="color:#03c75a; font-size:18px; font-weight:bold;">최적 경로 탐색 완료!</span><br>` +
+          `🕒 <b>예상 소요시간:</b> <strong style="color:red;">${timeStr}</strong> &nbsp; | &nbsp; 📏 <b>총 거리:</b> ${distStr} &nbsp; | &nbsp; 🔄 <b>환승:</b> ${transferCount}회<br>` +
+          `<div class="fare-box">💳 <b>이용 요금 안내</b> &nbsp;👉&nbsp; 일반: <b>${fares.adult}</b>원 | 청소년: <b>${fares.teen}</b>원 | 어린이: <b>${fares.child}</b>원</div>` +
+          `<div style="margin-top:10px; background:#f1f3f5; padding:10px; border-radius:6px; max-height:100px; overflow-y:auto;">${pathNames.join(' ➡️ ')}</div>`;
       }
 
       function resetMap(changeText = true) {
@@ -424,7 +455,7 @@
         nodeElements.classed('dimmed', false).classed('highlight-node', false).attr('r', 1.5);
         linkElements.classed('dimmed', false).classed('highlight-link', false);
         stationMarkerElements.classed('visible', false).classed('dimmed', false);
-        
+
         if (changeText) document.getElementById('result').innerText = '지도가 초기화되었습니다. 출발역과 도착역을 타이핑해 검색하세요.';
       }
     </script>
