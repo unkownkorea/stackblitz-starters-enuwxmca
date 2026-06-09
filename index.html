@@ -72,7 +72,7 @@
 
       #map-container {
         flex: 1;
-        background: #eef2f5;
+        background: #fdfdfd;
         border-radius: 12px;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
         overflow: hidden;
@@ -82,9 +82,12 @@
       svg { width: 100%; height: 100%; cursor: grab; }
       svg:active { cursor: grabbing; }
 
+      /* 지도 스타일 */
+      .map-layer { fill: #e9ecef; stroke: #dee2e6; stroke-width: 0.5px; }
+
       .link { stroke: #ced4da; stroke-opacity: 0.65; stroke-width: 1.2px; }
       .transfer-link { stroke-dasharray: 3 3; stroke-opacity: 0.3; }
-      .node { stroke: #fff; stroke-width: 0.5px; }
+      .node { stroke: #fff; stroke-width: 0.6px; }
       .dimmed { opacity: 0.05 !important; }
 
       .highlight-link {
@@ -100,33 +103,35 @@
 
       .station-marker { display: none; pointer-events: none; }
       .station-marker.visible { display: block; }
-      .station-pill { stroke: #ff0000; stroke-width: 0.2px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18)); }
+      .station-pill { stroke: #ff0000; stroke-width: 0.6px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18)); }
       .station-pill-text {
-        fill: #111; font-size: 0.2px; font-weight: 800; text-anchor: middle;
+        fill: #111; font-size: 3px; font-weight: 800; text-anchor: middle;
         dominant-baseline: middle; paint-order: stroke; stroke: white;
-        stroke-width: 0.1px; stroke-linejoin: round;
+        stroke-width: 0.8px; stroke-linejoin: round;
       }
-      
-      .map-layer { fill: #fff; stroke: #ccc; stroke-width: 0.5px; }
     </style>
   </head>
 
   <body>
     <div class="header">
       <h2 style="margin-top:0;">🚇 스마트 지하철 길찾기</h2>
+
       <div class="controls">
         <input list="station-list" id="start-station" placeholder="출발역 입력..." autocomplete="off">
         <span>→</span>
         <input list="station-list" id="end-station" placeholder="도착역 입력..." autocomplete="off">
         <datalist id="station-list"></datalist>
+
         <select id="criterion">
           <option value="time">⏳ 최소 시간</option>
           <option value="dist">📏 최단 거리</option>
           <option value="transferPenalty">🔄 최소 환승</option>
         </select>
+
         <button onclick="findAndHighlightRoute()">경로 탐색</button>
         <button onclick="resetMap()" style="background: #6c757d">초기화</button>
       </div>
+
       <div id="result">데이터를 불러오는 중입니다...</div>
     </div>
 
@@ -135,8 +140,16 @@
     </div>
 
     <script>
-      let rawNodes = [], graphLinks = [], adjList = {}, csvDataMap = {}, koreaMapData = null;
-      let nodeElements, linkElements, stationMarkerElements, currentPathSet = new Set();
+      let rawNodes = [];
+      let graphLinks = [];
+      let adjList = {};
+      let csvDataMap = {};
+      let koreaMapData = null;
+
+      let nodeElements;
+      let linkElements;
+      let stationMarkerElements;
+      let currentPathSet = new Set();
 
       const lineColors = {
         '01호선': '#0052A4', '02호선': '#009D3E', '03호선': '#EF7C1C', '04호선': '#00A5DE',
@@ -153,18 +166,26 @@
       function loadSubwayData() {
         Promise.all([
           fetch('./merged_subway_with_gps.json').then(res => res.json()),
-          fetch('./서울교통공사 역간거리 및 소요시간_240810.csv').then(res => res.ok ? res.text() : "").catch(() => ""),
-          fetch('https://raw.githubusercontent.com/southkorea/southkorea-maps/master/kostat/2013/json/skorea_provinces_geo.json').then(res => res.json()).catch(() => null)
+          fetch('./서울교통공사 역간거리 및 소요시간_240810.csv')
+            .then(res => res.ok ? res.text() : "")
+            .catch(() => ""),
+          // 대한민국 지도 데이터
+          fetch('https://raw.githubusercontent.com/southkorea/southkorea-maps/master/kostat/2013/json/skorea_provinces_geo.json')
+            .then(res => res.json())
+            .catch(() => null)
         ])
         .then(([json, csvText, mapJson]) => {
           koreaMapData = mapJson;
+          
           if (csvText) {
             const lines = csvText.split('\n').map(l => l.trim()).filter(l => l);
             for(let i = 1; i < lines.length; i++) {
               const row = lines[i].split(',');
               if(row.length < 5) continue;
+
               const lineNum = String(row[1]).padStart(2, '0') + '호선';
               const name = row[2].replace(/역$/, '').split('(')[0].trim();
+
               let timeSecs = 0;
               if(row[3] && row[3].includes(':')) {
                 const parts = row[3].split(':');
@@ -174,25 +195,37 @@
               csvDataMap[`${lineNum}-${name}`] = { timeSecs, dist };
             }
           }
+
           const stationData = Array.isArray(json) ? json : json.DATA || [];
           rawNodes = stationData.map((d, index) => {
             const name = d.station_nm || d.name;
             const line = d.line_num || d.line;
             return {
-              id: `${line}-${d.station_cd || index}`, name, line,
-              stationCode: d.station_cd || String(index), frCode: d.fr_code || '',
-              lat: Number(d.lat), lng: Number(d.lng), color: lineColors[line] || '#999',
+              id: `${line}-${d.station_cd || index}`,
+              name, line,
+              stationCode: d.station_cd || String(index),
+              frCode: d.fr_code || '',
+              lat: Number(d.lat), lng: Number(d.lng),
+              color: lineColors[line] || '#999',
             };
           }).filter(d => d.name && d.line && Number.isFinite(d.lat) && Number.isFinite(d.lng));
+
           if (rawNodes.length === 0) return;
-          fillStationOptions(); createGraphLinks(); createAdjList(); renderMap();
-          document.getElementById('result').innerText = `데이터 준비 완료. 한국 지도가 배경으로 로드되었습니다.`;
+
+          fillStationOptions();
+          createGraphLinks();
+          createAdjList();
+          renderMap();
+
+          document.getElementById('result').innerText = `지도와 데이터가 준비되었습니다.`;
         });
       }
 
       function fillStationOptions() {
         const datalist = document.getElementById('station-list');
+        datalist.innerHTML = '';
         const uniqueNames = [...new Set(rawNodes.map(n => n.name))].sort();
+
         uniqueNames.forEach(name => {
           let option = document.createElement('option');
           option.value = name;
@@ -203,22 +236,35 @@
       function createGraphLinks() {
         graphLinks = [];
         const lineGroups = d3.group(rawNodes, d => d.line);
+
         lineGroups.forEach(stations => {
           stations.sort((a, b) => String(a.frCode || a.stationCode).localeCompare(String(b.frCode || b.stationCode), 'ko', {numeric: true}));
+
           for (let i = 0; i < stations.length - 1; i++) {
-            const s = stations[i], t = stations[i + 1];
+            const s = stations[i];
+            const t = stations[i + 1];
+
             const csvData = csvDataMap[`${t.line}-${t.name}`];
             const time = (csvData && csvData.timeSecs > 0) ? csvData.timeSecs : 120;
             const dist = (csvData && csvData.dist > 0) ? csvData.dist : 1.0;
+
             graphLinks.push({ sourceId: s.id, targetId: t.id, isTransfer: false, time, dist, transferPenalty: time });
           }
         });
+
         const nameGroups = d3.group(rawNodes, d => d.name);
         nameGroups.forEach(stations => {
           if (stations.length < 2) return;
           for (let i = 0; i < stations.length; i++) {
             for (let j = i + 1; j < stations.length; j++) {
-              graphLinks.push({ sourceId: stations[i].id, targetId: stations[j].id, isTransfer: true, time: 300, dist: 0.1, transferPenalty: 100000 + 300 });
+              graphLinks.push({ 
+                sourceId: stations[i].id, 
+                targetId: stations[j].id, 
+                isTransfer: true, 
+                time: 300, 
+                dist: 0.1, 
+                transferPenalty: 100000 + 300 
+              });
             }
           }
         });
@@ -233,41 +279,57 @@
         });
       }
 
-      function getPillWidth(name) { return Math.max(12, name.length * 4 + 4); }
+      function getPillWidth(name) { return Math.max(18, name.length * 6 + 8); }
 
       function renderMap() {
         const svg = d3.select('#subway-map');
         const width = document.getElementById('map-container').clientWidth;
         const height = document.getElementById('map-container').clientHeight;
+
         svg.selectAll('*').remove();
 
-        const projection = d3.geoMercator().center([127.5, 36.5]).scale(width * 6).translate([width / 2, height / 2]);
+        // 대한민국 지도를 위한 프로젝션 설정
+        const projection = d3.geoMercator()
+          .center([127.5, 36.5])
+          .scale(width * 5)
+          .translate([width / 2, height / 2]);
+
         const pathGenerator = d3.geoPath().projection(projection);
 
+        // 지도 그리기
         if (koreaMapData) {
-            svg.selectAll('.map-layer').data(koreaMapData.features).enter().append('path').attr('class', 'map-layer').attr('d', pathGenerator);
+          svg.append('g')
+            .selectAll('path')
+            .data(koreaMapData.features)
+            .enter().append('path')
+            .attr('class', 'map-layer')
+            .attr('d', pathGenerator);
         }
 
+        // 노드 좌표 계산
         rawNodes.forEach(node => {
           const coords = projection([node.lng, node.lat]);
-          node.x = coords[0]; node.y = coords[1];
+          node.x = coords[0];
+          node.y = coords[1];
           node.pillWidth = getPillWidth(node.name);
         });
 
         const nodeById = new Map(rawNodes.map(node => [node.id, node]));
-        graphLinks.forEach(link => { link.sourceNode = nodeById.get(link.sourceId); link.targetNode = nodeById.get(link.targetId); });
+        graphLinks.forEach(link => {
+          link.sourceNode = nodeById.get(link.sourceId);
+          link.targetNode = nodeById.get(link.targetId);
+        });
 
         const g = svg.append('g');
-        svg.call(d3.zoom().scaleExtent([0.5, 50]).on('zoom', event => g.attr('transform', event.transform)));
+        svg.call(d3.zoom().scaleExtent([0.5, 20]).on('zoom', event => g.attr('transform', event.transform)));
 
         linkElements = g.append('g').selectAll('line').data(graphLinks).enter().append('line')
           .attr('class', d => d.isTransfer ? 'link transfer-link' : 'link')
           .attr('x1', d => d.sourceNode.x).attr('y1', d => d.sourceNode.y)
           .attr('x2', d => d.targetNode.x).attr('y2', d => d.targetNode.y);
 
-        // 노드 크기 4px로 수정
         nodeElements = g.append('g').selectAll('circle').data(rawNodes).enter().append('circle')
-          .attr('class', 'node').attr('r', 4).attr('cx', d => d.x).attr('cy', d => d.y).attr('fill', d => d.color)
+          .attr('class', 'node').attr('r', 3).attr('cx', d => d.x).attr('cy', d => d.y).attr('fill', d => d.color) // r=3
           .on('mouseenter', (event, d) => stationMarkerElements.filter(s => s.id === d.id).classed('visible', true).raise())
           .on('mouseleave', (event, d) => { if (!currentPathSet.has(d.id)) stationMarkerElements.filter(s => s.id === d.id).classed('visible', false); });
 
@@ -275,16 +337,17 @@
           .attr('class', 'station-marker').attr('transform', d => `translate(${d.x}, ${d.y})`);
 
         stationMarkerElements.append('rect').attr('class', 'station-pill')
-          .attr('x', d => -d.pillWidth / 2).attr('y', -3).attr('width', d => d.pillWidth).attr('height', 6).attr('rx', 2).attr('fill', d => d.color);
+          .attr('x', d => -d.pillWidth / 2).attr('y', -4.5).attr('width', d => d.pillWidth).attr('height', 9).attr('rx', 4.5).attr('fill', d => d.color);
 
         stationMarkerElements.append('text').attr('class', 'station-pill-text')
-          .attr('x', 0).attr('y', 0.5).text(d => d.name);
+          .attr('x', 0).attr('y', 0.7).text(d => d.name);
       }
 
       function calculateFare(distanceKm) {
         let extraFare = 0;
         if (distanceKm > 10 && distanceKm <= 50) extraFare = Math.ceil((distanceKm - 10) / 5) * 100;
         else if (distanceKm > 50) extraFare = 800 + Math.ceil((distanceKm - 50) / 8) * 100;
+
         const adult = 1400 + extraFare;
         const teen = 800 + Math.floor((extraFare * 0.8) / 10) * 10;
         const child = 500 + Math.floor((extraFare * 0.5) / 10) * 10;
@@ -294,25 +357,45 @@
       function findShortestPath(startName, endName, criterion) {
         const startNodes = rawNodes.filter(n => n.name === startName).map(n => n.id);
         const endNodes = rawNodes.filter(n => n.name === endName).map(n => n.id);
+
         if (startNodes.length === 0 || endNodes.length === 0) return null;
-        const distMap = new Map(), prevMap = new Map(), unvisited = new Set();
+
+        const distMap = new Map();
+        const prevMap = new Map();
+        const unvisited = new Set();
+
         rawNodes.forEach(n => { distMap.set(n.id, Infinity); unvisited.add(n.id); });
         startNodes.forEach(id => distMap.set(id, 0));
+
         while(unvisited.size > 0) {
           let u = null, minDist = Infinity;
-          for (const nodeId of unvisited) { const d = distMap.get(nodeId); if (d < minDist) { minDist = d; u = nodeId; } }
+          for (const nodeId of unvisited) {
+            const d = distMap.get(nodeId);
+            if (d < minDist) { minDist = d; u = nodeId; }
+          }
+
           if (u === null) break;
+
           if (endNodes.includes(u)) {
-            const path = []; let curr = u;
-            while (curr !== undefined) { path.unshift(curr); curr = prevMap.get(curr); }
+            const path = [];
+            let curr = u;
+            while (curr !== undefined) {
+              path.unshift(curr);
+              curr = prevMap.get(curr);
+            }
             return path;
           }
           unvisited.delete(u);
+
           for (const edge of adjList[u]) {
             const v = edge.targetId;
             if (!unvisited.has(v)) continue;
+
             const alt = distMap.get(u) + edge[criterion];
-            if (alt < distMap.get(v)) { distMap.set(v, alt); prevMap.set(v, u); }
+            if (alt < distMap.get(v)) {
+              distMap.set(v, alt);
+              prevMap.set(v, u);
+            }
           }
         }
         return null;
@@ -322,43 +405,68 @@
         const startName = document.getElementById('start-station').value.trim();
         const endName = document.getElementById('end-station').value.trim();
         const criterion = document.getElementById('criterion').value;
-        if (!startName || !endName) return alert('출발역과 도착역을 입력해주세요.');
+
+        if (!startName || !endName) return alert('출발역과 도착역을 모두 올바르게 입력해주세요.');
+
         resetMap(false);
         const path = findShortestPath(startName, endName, criterion);
         const resultDiv = document.getElementById('result');
-        if (!path) { resultDiv.innerHTML = '<span style="color:red">경로를 찾을 수 없습니다.</span>'; return; }
-        
+
+        if (!path) {
+          resultDiv.innerHTML = '<span style="color:red">경로를 찾을 수 없거나 올바른 역 이름이 아닙니다.</span>';
+          return;
+        }
+
         let totalTimeSecs = 0, totalDist = 0, transferCount = 0;
         for (let i = 0; i < path.length - 1; i++) {
           const edge = adjList[path[i]].find(e => e.targetId === path[i+1]);
-          totalTimeSecs += edge.time; totalDist += edge.dist;
+          totalTimeSecs += edge.time;
+          totalDist += edge.dist;
           if(edge.isTransfer) transferCount++;
         }
-        const mins = Math.floor(totalTimeSecs / 60), secs = totalTimeSecs % 60;
+
+        const mins = Math.floor(totalTimeSecs / 60);
+        const secs = totalTimeSecs % 60;
         const timeStr = secs > 0 ? `${mins}분 ${secs}초` : `${mins}분`;
         const distStr = totalDist.toFixed(1) + 'km';
         const fares = calculateFare(totalDist);
+
         currentPathSet = new Set(path);
         const linkSet = new Set();
-        for (let i = 0; i < path.length - 1; i++) { linkSet.add(`${path[i]}__${path[i + 1]}`); linkSet.add(`${path[i + 1]}__${path[i]}`); }
-        
-        nodeElements.classed('dimmed', d => !currentPathSet.has(d.id)).classed('highlight-node', d => currentPathSet.has(d.id)).attr('r', d => (currentPathSet.has(d.id) ? 4 : 4));
+        for (let i = 0; i < path.length - 1; i++) {
+          linkSet.add(`${path[i]}__${path[i + 1]}`);
+          linkSet.add(`${path[i + 1]}__${path[i]}`);
+        }
+
+        nodeElements.classed('dimmed', d => !currentPathSet.has(d.id)).classed('highlight-node', d => currentPathSet.has(d.id)).attr('r', d => (currentPathSet.has(d.id) ? 4 : 3));
         stationMarkerElements.classed('visible', d => currentPathSet.has(d.id)).classed('dimmed', d => !currentPathSet.has(d.id)).raise();
         linkElements.classed('dimmed', d => !linkSet.has(`${d.sourceId}__${d.targetId}`)).classed('highlight-link', d => linkSet.has(`${d.sourceId}__${d.targetId}`));
 
         let prevName = "";
         const pathNames = [];
-        path.forEach((id) => { const station = rawNodes.find(node => node.id === id); if(station.name !== prevName) { pathNames.push(`<strong>${station.name}</strong>`); prevName = station.name; } });
-        resultDiv.innerHTML = `<span style="color:#03c75a; font-weight:bold;">경로 탐색 완료!</span><br>🕒 <b>${timeStr}</b> | 📏 ${distStr} | 🔄 ${transferCount}회 환승<br><div class="fare-box">💳 <b>일반: ${fares.adult}원</b> | 청소년: ${fares.teen}원 | 어린이: ${fares.child}원</div><div style="margin-top:10px;">${pathNames.join(' ➡️ ')}</div>`;
+        path.forEach((id) => {
+          const station = rawNodes.find(node => node.id === id);
+          if(station.name !== prevName) {
+              pathNames.push(`<strong>${station.name}</strong><span style="font-size:12px; color:#666;">(${station.line})</span>`);
+              prevName = station.name;
+          }
+        });
+
+        resultDiv.innerHTML = 
+          `<span style="color:#03c75a; font-size:18px; font-weight:bold;">최적 경로 탐색 완료!</span><br>` +
+          `🕒 <b>예상 소요시간:</b> <strong style="color:red;">${timeStr}</strong> &nbsp; | &nbsp; 📏 <b>총 거리:</b> ${distStr} &nbsp; | &nbsp; 🔄 <b>환승:</b> ${transferCount}회<br>` +
+          `<div class="fare-box">💳 <b>이용 요금 안내</b> &nbsp;👉&nbsp; 일반: <b>${fares.adult}</b>원 | 청소년: <b>${fares.teen}</b>원 | 어린이: <b>${fares.child}</b>원</div>` +
+          `<div style="margin-top:10px; background:#f1f3f5; padding:10px; border-radius:6px; max-height:100px; overflow-y:auto;">${pathNames.join(' ➡️ ')}</div>`;
       }
 
       function resetMap(changeText = true) {
         if (!nodeElements || !linkElements || !stationMarkerElements) return;
         currentPathSet = new Set();
-        nodeElements.classed('dimmed', false).classed('highlight-node', false).attr('r', 4);
+        nodeElements.classed('dimmed', false).classed('highlight-node', false).attr('r', 3);
         linkElements.classed('dimmed', false).classed('highlight-link', false);
         stationMarkerElements.classed('visible', false).classed('dimmed', false);
-        if (changeText) document.getElementById('result').innerText = '지도가 초기화되었습니다. 검색하세요.';
+
+        if (changeText) document.getElementById('result').innerText = '지도가 초기화되었습니다. 출발역과 도착역을 타이핑해 검색하세요.';
       }
     </script>
   </body>
