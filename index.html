@@ -102,11 +102,11 @@
       .station-marker.visible { display: block; }
       .station-pill { stroke: #ff0000; stroke-width: 0.6px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18)); }
       
-      /* 텍스트 크기를 5px로 설정 */
+      /* 역 이름 텍스트 크기를 0.5px로 설정 */
       .station-pill-text {
-        fill: #111; font-size: 5px; font-weight: 800; text-anchor: middle;
+        fill: #111; font-size: 0.5px; font-weight: 800; text-anchor: middle;
         dominant-baseline: middle; paint-order: stroke; stroke: white;
-        stroke-width: 0.8px; stroke-linejoin: round;
+        stroke-width: 0.1px; stroke-linejoin: round;
       }
     </style>
   </head>
@@ -193,6 +193,7 @@
           createGraphLinks();
           createAdjList();
           renderMap();
+
           document.getElementById('result').innerText = `총 ${rawNodes.length}개 역 데이터를 불러왔습니다.`;
         });
       }
@@ -228,6 +229,8 @@
         });
       }
 
+      function getPillWidth(name) { return Math.max(5, name.length * 0.5 + 2); }
+
       function renderMap() {
         const svg = d3.select('#subway-map');
         const width = document.getElementById('map-container').clientWidth;
@@ -240,7 +243,7 @@
         const xScale = d3.scaleLinear().domain(d3.extent(rawNodes, d => d.lng)).range([50, width - 50]);
         const yScale = d3.scaleLinear().domain(d3.extent(rawNodes, d => d.lat)).range([height - 50, 50]);
 
-        rawNodes.forEach(n => { n.x = xScale(n.lng); n.y = yScale(n.lat); n.pillWidth = Math.max(12, n.name.length * 3 + 4); });
+        rawNodes.forEach(n => { n.x = xScale(n.lng); n.y = yScale(n.lat); n.pillWidth = getPillWidth(n.name); });
         const nodeById = new Map(rawNodes.map(n => [n.id, n]));
         graphLinks.forEach(l => { l.sourceNode = nodeById.get(l.sourceId); l.targetNode = nodeById.get(l.targetId); });
 
@@ -249,15 +252,13 @@
           .attr('x1', d => d.sourceNode.x).attr('y1', d => d.sourceNode.y)
           .attr('x2', d => d.targetNode.x).attr('y2', d => d.targetNode.y);
 
-        // 노드 크기를 5로 설정
+        // 노드 반지름을 0.5px로 설정
         nodeElements = g.append('g').selectAll('circle').data(rawNodes).enter().append('circle')
-          .attr('class', 'node').attr('r', 5).attr('cx', d => d.x).attr('cy', d => d.y).attr('fill', d => d.color)
-          .on('mouseenter', (e, d) => stationMarkerElements.filter(s => s.id === d.id).classed('visible', true).raise())
-          .on('mouseleave', (e, d) => { if (!currentPathSet.has(d.id)) stationMarkerElements.filter(s => s.id === d.id).classed('visible', false); });
+          .attr('class', 'node').attr('r', 0.5).attr('cx', d => d.x).attr('cy', d => d.y).attr('fill', d => d.color);
 
         stationMarkerElements = g.append('g').selectAll('g').data(rawNodes).enter().append('g')
           .attr('class', 'station-marker').attr('transform', d => `translate(${d.x}, ${d.y})`);
-        stationMarkerElements.append('rect').attr('class', 'station-pill').attr('x', d => -d.pillWidth/2).attr('y', -4.5).attr('width', d => d.pillWidth).attr('height', 9).attr('rx', 4.5).attr('fill', d => d.color);
+        stationMarkerElements.append('rect').attr('class', 'station-pill').attr('x', d => -d.pillWidth/2).attr('y', -1).attr('width', d => d.pillWidth).attr('height', 2).attr('rx', 0.5).attr('fill', d => d.color);
         stationMarkerElements.append('text').attr('class', 'station-pill-text').text(d => d.name);
       }
 
@@ -273,7 +274,6 @@
         const dists = {}, prev = {}, q = new Set(rawNodes.map(n => n.id));
         rawNodes.forEach(n => dists[n.id] = Infinity);
         sIds.forEach(id => dists[id] = 0);
-        
         while(q.size) {
           let u = [...q].reduce((a, b) => dists[a] < dists[b] ? a : b);
           if(dists[u] === Infinity || eIds.includes(u)) break;
@@ -304,7 +304,7 @@
         const linkSet = new Set();
         for(let i=0; i<path.length-1; i++){ linkSet.add(`${path[i]}__${path[i+1]}`); linkSet.add(`${path[i+1]}__${path[i]}`); }
         
-        nodeElements.classed('dimmed', d => !currentPathSet.has(d.id)).classed('highlight-node', d => currentPathSet.has(d.id)).attr('r', d => currentPathSet.has(d.id) ? 6 : 5);
+        nodeElements.classed('dimmed', d => !currentPathSet.has(d.id)).classed('highlight-node', d => currentPathSet.has(d.id)).attr('r', d => currentPathSet.has(d.id) ? 1.5 : 0.5);
         stationMarkerElements.classed('visible', d => currentPathSet.has(d.id)).classed('dimmed', d => !currentPathSet.has(d.id)).raise();
         linkElements.classed('dimmed', d => !linkSet.has(`${d.sourceId}__${d.targetId}`)).classed('highlight-link', d => linkSet.has(`${d.sourceId}__${d.targetId}`));
         
@@ -315,7 +315,7 @@
 
       function resetMap(changeText = true) {
         currentPathSet = new Set();
-        nodeElements.classed('dimmed', false).classed('highlight-node', false).attr('r', 5);
+        nodeElements.classed('dimmed', false).classed('highlight-node', false).attr('r', 0.5);
         linkElements.classed('dimmed', false).classed('highlight-link', false);
         stationMarkerElements.classed('visible', false).classed('dimmed', false);
         if(changeText) document.getElementById('result').innerText = '지도가 초기화되었습니다.';
