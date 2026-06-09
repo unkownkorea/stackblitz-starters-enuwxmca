@@ -169,7 +169,6 @@
           fetch('./서울교통공사 역간거리 및 소요시간_240810.csv')
             .then(res => res.ok ? res.text() : "")
             .catch(() => ""),
-          // 대한민국 지도 데이터
           fetch('https://raw.githubusercontent.com/southkorea/southkorea-maps/master/kostat/2013/json/skorea_provinces_geo.json')
             .then(res => res.json())
             .catch(() => null)
@@ -288,7 +287,6 @@
 
         svg.selectAll('*').remove();
 
-        // 대한민국 지도를 위한 프로젝션 설정
         const projection = d3.geoMercator()
           .center([127.5, 36.5])
           .scale(width * 5)
@@ -296,9 +294,13 @@
 
         const pathGenerator = d3.geoPath().projection(projection);
 
-        // 지도 그리기
+        // Zoom 그룹 생성
+        const g = svg.append('g');
+        svg.call(d3.zoom().scaleExtent([0.5, 20]).on('zoom', event => g.attr('transform', event.transform)));
+
+        // 지도 레이어 (g 안에 추가하여 같이 움직이게 함)
         if (koreaMapData) {
-          svg.append('g')
+          g.append('g')
             .selectAll('path')
             .data(koreaMapData.features)
             .enter().append('path')
@@ -320,16 +322,14 @@
           link.targetNode = nodeById.get(link.targetId);
         });
 
-        const g = svg.append('g');
-        svg.call(d3.zoom().scaleExtent([0.5, 20]).on('zoom', event => g.attr('transform', event.transform)));
-
+        // 링크/노드 (g 안에 추가)
         linkElements = g.append('g').selectAll('line').data(graphLinks).enter().append('line')
           .attr('class', d => d.isTransfer ? 'link transfer-link' : 'link')
           .attr('x1', d => d.sourceNode.x).attr('y1', d => d.sourceNode.y)
           .attr('x2', d => d.targetNode.x).attr('y2', d => d.targetNode.y);
 
         nodeElements = g.append('g').selectAll('circle').data(rawNodes).enter().append('circle')
-          .attr('class', 'node').attr('r', 3).attr('cx', d => d.x).attr('cy', d => d.y).attr('fill', d => d.color) // r=3
+          .attr('class', 'node').attr('r', 2).attr('cx', d => d.x).attr('cy', d => d.y).attr('fill', d => d.color) // r=2
           .on('mouseenter', (event, d) => stationMarkerElements.filter(s => s.id === d.id).classed('visible', true).raise())
           .on('mouseleave', (event, d) => { if (!currentPathSet.has(d.id)) stationMarkerElements.filter(s => s.id === d.id).classed('visible', false); });
 
@@ -438,7 +438,7 @@
           linkSet.add(`${path[i + 1]}__${path[i]}`);
         }
 
-        nodeElements.classed('dimmed', d => !currentPathSet.has(d.id)).classed('highlight-node', d => currentPathSet.has(d.id)).attr('r', d => (currentPathSet.has(d.id) ? 4 : 3));
+        nodeElements.classed('dimmed', d => !currentPathSet.has(d.id)).classed('highlight-node', d => currentPathSet.has(d.id)).attr('r', d => (currentPathSet.has(d.id) ? 4 : 2));
         stationMarkerElements.classed('visible', d => currentPathSet.has(d.id)).classed('dimmed', d => !currentPathSet.has(d.id)).raise();
         linkElements.classed('dimmed', d => !linkSet.has(`${d.sourceId}__${d.targetId}`)).classed('highlight-link', d => linkSet.has(`${d.sourceId}__${d.targetId}`));
 
@@ -462,7 +462,7 @@
       function resetMap(changeText = true) {
         if (!nodeElements || !linkElements || !stationMarkerElements) return;
         currentPathSet = new Set();
-        nodeElements.classed('dimmed', false).classed('highlight-node', false).attr('r', 3);
+        nodeElements.classed('dimmed', false).classed('highlight-node', false).attr('r', 2);
         linkElements.classed('dimmed', false).classed('highlight-link', false);
         stationMarkerElements.classed('visible', false).classed('dimmed', false);
 
